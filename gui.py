@@ -44,14 +44,14 @@ import theme
 try:
     import customtkinter as ctk
     CTK_OK = True
-except ImportError:                      # the GUI is optional
+except (ImportError, AttributeError):    # the GUI is optional (AttributeError: broken tkinter)
     ctk = None                           # type: ignore[assignment]
     CTK_OK = False
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
     DND_OK = True
-except ImportError:                      # optional: without this there is no drag and drop
+except (ImportError, AttributeError):    # optional: no drag and drop (AttributeError: broken tkinter)
     DND_FILES = None                     # type: ignore[assignment]
     TkinterDnD = None                    # type: ignore[assignment]
     DND_OK = False
