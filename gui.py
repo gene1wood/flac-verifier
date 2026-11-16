@@ -5130,6 +5130,71 @@ if CTK_OK:
             super().destroy()
 
 
+def _detect_linux_scale() -> float:
+    """Best-effort desktop scale factor; Tk alone reports 96 DPI under XWayland.
+
+    Sources, first one above 1.0 wins: `wlr-randr` output scale, Xft.dpi (xrdb),
+    GDK_SCALE, the GNOME `scaling-factor` setting, then Tk's pixels-per-inch.
+    """
+    def run(*cmd: str) -> str:
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True,
+                                  timeout=2).stdout
+        except Exception:
+            return ""
+
+    candidates: list[float] = []
+    # Wayland compositors with wlr-output-management (COSMIC, Sway, ...): the
+    # first output's scale. Not available everywhere, hence a candidate only.
+    match = re.search(r"Scale:\s*([\d.]+)", run("wlr-randr"))
+    if match:
+        candidates.append(float(match.group(1)))
+    match = re.search(r"Xft\.dpi:\s*([\d.]+)", run("xrdb", "-query"))
+    if match:
+        candidates.append(float(match.group(1)) / 96.0)
+    try:
+        candidates.append(float(os.environ.get("GDK_SCALE", "")))
+    except ValueError:
+        pass
+    match = re.search(r"uint32\s+(\d+)", run("gsettings", "get",
+                                              "org.gnome.desktop.interface",
+                                              "scaling-factor"))
+    if match:
+        candidates.append(float(match.group(1)))
+    try:
+        import tkinter
+        probe = tkinter.Tk()
+        probe.withdraw()
+        candidates.append(probe.winfo_fpixels("1i") / 96.0)
+        probe.destroy()
+    except Exception:
+        pass
+    return next((v for v in candidates if v > 1.05), 1.0)
+
+
+def _apply_linux_scaling() -> None:
+    """CustomTkinter only auto-detects DPI on Windows/macOS; do it for X11/Wayland.
+
+    `FLAC_VERIFIER_SCALE` (e.g. `1.5`) overrides detection; otherwise the factor
+    comes from `_detect_linux_scale()`.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    factor = 0.0
+    raw = os.environ.get("FLAC_VERIFIER_SCALE", "").strip()
+    if raw:
+        try:
+            factor = float(raw)
+        except ValueError:
+            factor = 0.0
+    if factor <= 0:
+        factor = _detect_linux_scale()
+    factor = max(1.0, min(factor, 4.0))
+    if abs(factor - 1.0) > 0.05:
+        ctk.set_widget_scaling(factor)
+        ctk.set_window_scaling(factor)
+
+
 def main(initial_path: str | None = None) -> int:
     """Entry point of the graphical interface."""
     if not CTK_OK:
@@ -5143,6 +5208,7 @@ def main(initial_path: str | None = None) -> int:
         theme.load_preference()
         ctk.set_appearance_mode("light" if theme.MODE == "light" else "dark")
         ctk.set_default_color_theme("blue")
+        _apply_linux_scaling()
         window = FlacVerifierWindow(initial_path=initial_path)
         window.mainloop()
         return 0
